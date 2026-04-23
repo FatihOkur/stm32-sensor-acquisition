@@ -1,0 +1,7 @@
+../Core/Src/lis3dsh.c:17:13:device_valid	5
+../Core/Src/lis3dsh.c:23:23:read_registers	6
+../Core/Src/lis3dsh.c:53:23:write_checked	4
+../Core/Src/lis3dsh.c:77:16:decode_le16	2
+../Core/Src/lis3dsh.c:90:16:LIS3DSH_Init	9
+../Core/Src/lis3dsh.c:142:16:LIS3DSH_ReadSample	7
+../Core/Src/lis3dsh.c:181:13:LIS3DSH_ResultString	8

@@ -1,0 +1,8 @@
+../Core/Src/mpu6050.c:20:13:valid_device	5
+../Core/Src/mpu6050.c:26:23:read_regs	2
+../Core/Src/mpu6050.c:40:23:write_reg	2
+../Core/Src/mpu6050.c:54:23:write_checked	4
+../Core/Src/mpu6050.c:70:16:decode_be16	2
+../Core/Src/mpu6050.c:78:16:MPU6050_Init	11
+../Core/Src/mpu6050.c:132:16:MPU6050_ReadSample	10
+../Core/Src/mpu6050.c:169:13:MPU6050_ResultString	8
