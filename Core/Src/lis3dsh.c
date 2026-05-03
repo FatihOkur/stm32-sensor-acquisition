@@ -118,6 +118,10 @@ LIS3DSH_Result LIS3DSH_Init(LIS3DSH_Device *device)
     result = write_checked(device, REG_CTRL4, 0x07U);
     if (result != LIS3DSH_OK) return result;
 
+    /* Clear interrupt routing retained across MCU-only resets or mode changes. */
+    result = write_checked(device, 0x23U, 0x00U);
+    if (result != LIS3DSH_OK) return result;
+
     /* 50 Hz bandwidth, +/-2 g range, self-test off, four-wire SPI. */
     result = write_checked(device, REG_CTRL5, 0xC0U);
     if (result != LIS3DSH_OK) return result;

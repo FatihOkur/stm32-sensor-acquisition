@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include "lis3dsh.h"
 #include "mpu6050.h"
+#include "acquisition.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -43,8 +44,11 @@
 
 /* Private variables ---------------------------------------------------------*/
 I2C_HandleTypeDef hi2c1;
+DMA_HandleTypeDef hdma_i2c1_rx;
 
 SPI_HandleTypeDef hspi1;
+DMA_HandleTypeDef hdma_spi1_rx;
+DMA_HandleTypeDef hdma_spi1_tx;
 
 UART_HandleTypeDef huart2;
 
@@ -55,6 +59,7 @@ UART_HandleTypeDef huart2;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_I2C1_Init(void);
@@ -96,61 +101,12 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_USART2_UART_Init();
   MX_SPI1_Init();
   MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
-  /* Initialize the MPU first so its startup delay does not stall LIS3DSH sampling. */
-  MPU6050_Device imu = {.i2c = &hi2c1, .address_7bit = 0x68U};
-  MPU6050_Result imu_init = MPU6050_Init(&imu);
-  /* Capture the bus state immediately after an initialization failure. */
-  if (imu_init != MPU6050_OK)
-  {
-      uint32_t hal_error = HAL_I2C_GetError(&hi2c1);
-      uint32_t hal_state = HAL_I2C_GetState(&hi2c1);
-      uint32_t sr2 = hi2c1.Instance->SR2;
-      unsigned scl = (unsigned)HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_8);
-      unsigned sda = (unsigned)HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_7);
-
-      char diagnostic[160];
-      int length = snprintf(
-          diagnostic, sizeof(diagnostic),
-          "I2C INIT FAIL | SCL=%u SDA=%u | SR2=0x%04lX"
-          " | state=0x%02lX error=0x%08lX\r\n",
-          scl, sda, (unsigned long)sr2,
-          (unsigned long)hal_state, (unsigned long)hal_error);
-
-      if (length > 0 && length < (int)sizeof(diagnostic))
-      {
-          HAL_UART_Transmit(&huart2, (uint8_t *)diagnostic,
-                           (uint16_t)length, 100U);
-      }
-  }
-  MPU6050_Sample imu_sample = {0};
-  uint32_t imu_count = 0U, imu_errors = 0U;
-
-  LIS3DSH_Device accel = {
-      .spi = &hspi1, .cs_port = GPIOE, .cs_pin = GPIO_PIN_3
-  };
-  LIS3DSH_Result init_result = LIS3DSH_Init(&accel);
-  LIS3DSH_Sample sample = {0};
-  uint32_t sample_count = 0U, bus_errors = 0U, overrun_events = 0U;
-  uint32_t last_log_ms = HAL_GetTick();
-  char log_message[256];
-  int log_length;
-
-  log_length = snprintf(log_message, sizeof(log_message),
-      "LIS3DSH init=%s | ID=0x%02X | HAL=%u\r\n"
-      "MPU6050 init=%s | ID=0x%02X | HAL=%u | reg=0x%02X\r\n",
-      LIS3DSH_ResultString(init_result), (unsigned)accel.who_am_i,
-      (unsigned)accel.last_hal_status,
-      MPU6050_ResultString(imu_init), (unsigned)imu.who_am_i,
-      (unsigned)imu.last_hal_status, (unsigned)imu.failed_register);
-  if (log_length > 0 && log_length < (int)sizeof(log_message))
-  {
-      HAL_UART_Transmit(&huart2, (uint8_t *)log_message,
-                       (uint16_t)log_length, 100U);
-  }
+  Acquisition_Init(&hspi1, &hi2c1, &huart2);
 
   /* USER CODE END 2 */
 
@@ -161,103 +117,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  /* Poll both devices independently; one failure must not stop the other. */
-	  if (init_result == LIS3DSH_OK)
-	  {
-	      LIS3DSH_Result result = LIS3DSH_ReadSample(&accel, &sample);
-	      if (result == LIS3DSH_OK)
-	      {
-	          ++sample_count;
-	          if (sample.overrun) ++overrun_events;
-	      }
-	      else if (result != LIS3DSH_NO_DATA) ++bus_errors;
-	  }
-
-	  if (imu_init == MPU6050_OK)
-	  {
-	      MPU6050_Result result = MPU6050_ReadSample(&imu, &imu_sample);
-	      if (result == MPU6050_OK) ++imu_count;
-	      else if (result != MPU6050_NO_DATA)
-	      {
-	          ++imu_errors;
-
-	          /* Report only the first read failure to avoid flooding the UART. */
-	          if (imu_errors == 1U)
-	          {
-	              uint32_t hal_error = HAL_I2C_GetError(&hi2c1);
-	              uint32_t sr2 = hi2c1.Instance->SR2;
-
-	              log_length = snprintf(
-	                  log_message, sizeof(log_message),
-	                  "MPU READ FAIL | HAL=%u reg=0x%02X"
-	                  " | SCL=%u SDA=%u | SR2=0x%04lX error=0x%08lX\r\n",
-	                  (unsigned)imu.last_hal_status,
-	                  (unsigned)imu.failed_register,
-	                  (unsigned)HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_8),
-	                  (unsigned)HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_7),
-	                  (unsigned long)sr2, (unsigned long)hal_error);
-
-	              if (log_length > 0 && log_length < (int)sizeof(log_message))
-	              {
-	                  HAL_UART_Transmit(&huart2, (uint8_t *)log_message,
-	                                   (uint16_t)log_length, 100U);
-	              }
-	          }
-	      }
-	  }
-
-	  uint32_t now = HAL_GetTick();
-	  if ((uint32_t)(now - last_log_ms) >= 500U)
-	  {
-	      last_log_ms = now;
-	      if (sample_count > 0U)
-	      {
-	          log_length = snprintf(log_message, sizeof(log_message),
-	              "LIS N=%lu | A[mg]=%ld,%ld,%ld | age=%lu ms | err=%lu ovr=%lu\r\n",
-	              (unsigned long)sample_count,
-	              (long)(sample.x_ug / 1000L), (long)(sample.y_ug / 1000L),
-	              (long)(sample.z_ug / 1000L),
-	              (unsigned long)(now - sample.read_time_ms),
-	              (unsigned long)bus_errors, (unsigned long)overrun_events);
-	      }
-	      else
-	      {
-	          log_length = snprintf(log_message, sizeof(log_message),
-	              "LIS waiting | init=%s | err=%lu\r\n",
-	              LIS3DSH_ResultString(init_result), (unsigned long)bus_errors);
-	      }
-	      if (log_length > 0 && log_length < (int)sizeof(log_message))
-	      {
-	          HAL_UART_Transmit(&huart2, (uint8_t *)log_message,
-	                           (uint16_t)log_length, 100U);
-	      }
-
-	      if (imu_count > 0U)
-	      {
-	          log_length = snprintf(log_message, sizeof(log_message),
-	              "MPU N=%lu | A[mg]=%ld,%ld,%ld | G[mdps]=%ld,%ld,%ld | T[mC]=%ld | age=%lu ms | err=%lu\r\n",
-	              (unsigned long)imu_count,
-	              (long)imu_sample.ax_mg, (long)imu_sample.ay_mg, (long)imu_sample.az_mg,
-	              (long)imu_sample.gx_mdps, (long)imu_sample.gy_mdps, (long)imu_sample.gz_mdps,
-	              (long)imu_sample.temperature_mdegc,
-	              (unsigned long)(HAL_GetTick() - imu_sample.read_time_ms),
-	              (unsigned long)imu_errors);
-	      }
-	      else
-	      {
-	          log_length = snprintf(log_message, sizeof(log_message),
-	              "MPU waiting | init=%s | err=%lu | HAL=%u | reg=0x%02X\r\n",
-	              MPU6050_ResultString(imu_init), (unsigned long)imu_errors,
-	              (unsigned)imu.last_hal_status, (unsigned)imu.failed_register);
-	      }
-	      if (log_length > 0 && log_length < (int)sizeof(log_message))
-	      {
-	          HAL_UART_Transmit(&huart2, (uint8_t *)log_message,
-	                           (uint16_t)log_length, 100U);
-	      }
-	      HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_12);
-	  }
-	  HAL_Delay(1U);
+	  Acquisition_Process();
 
   }
   /* USER CODE END 3 */
@@ -415,6 +275,29 @@ static void MX_USART2_UART_Init(void)
 }
 
 /**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA2_CLK_ENABLE();
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Stream0_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
+  /* DMA2_Stream0_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream0_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream0_IRQn);
+  /* DMA2_Stream3_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream3_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream3_IRQn);
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -466,11 +349,11 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Alternate = GPIO_AF5_SPI2;
   HAL_GPIO_Init(PDM_OUT_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : B1_Pin */
-  GPIO_InitStruct.Pin = B1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  /*Configure GPIO pin : PA0 */
+  GPIO_InitStruct.Pin = GPIO_PIN_0;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pin : I2S3_WS_Pin */
   GPIO_InitStruct.Pin = I2S3_WS_Pin;
@@ -525,17 +408,36 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Alternate = GPIO_AF10_OTG_FS;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : PD2 */
+  GPIO_InitStruct.Pin = GPIO_PIN_2;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
   /*Configure GPIO pin : OTG_FS_OverCurrent_Pin */
   GPIO_InitStruct.Pin = OTG_FS_OverCurrent_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(OTG_FS_OverCurrent_GPIO_Port, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : PE0 */
+  GPIO_InitStruct.Pin = GPIO_PIN_0;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
   /*Configure GPIO pin : MEMS_INT2_Pin */
   GPIO_InitStruct.Pin = MEMS_INT2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_EVT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(MEMS_INT2_GPIO_Port, &GPIO_InitStruct);
+
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI0_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(EXTI0_IRQn);
+
+  HAL_NVIC_SetPriority(EXTI2_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(EXTI2_IRQn);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
