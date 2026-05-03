@@ -1,4 +1,4 @@
-# STM32 Sensor Acquisition
+# STM32 Sensor Drivers — Polling, Interrupt & DMA
 
 An embedded C project that acquires data from two sensors on an STM32F407 using selectable **polling, interrupt, and DMA** modes with the same hardware setup.
 
