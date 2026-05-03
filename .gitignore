@@ -1,0 +1,17 @@
+# Generated build directories
+Debug/
+Release/
+
+# Eclipse workspace data
+.metadata/
+
+# Generated build artifacts
+*.o
+*.d
+*.elf
+*.bin
+*.hex
+*.map
+*.list
+*.su
+*.cyclo
